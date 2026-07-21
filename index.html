@@ -78,6 +78,14 @@
     
     <!-- Sidebar Left (Always visible except in custom tabs) -->
     <aside class="sidebar" id="sidebar-layout">
+      <!-- Environmental Categories Widget -->
+      <div class="sidebar-widget glass">
+        <h3 class="widget-title">📂 카테고리</h3>
+        <ul class="category-list" id="category-list">
+          <!-- Categories list loaded dynamically -->
+        </ul>
+      </div>
+
       <!-- Slide Show Tour Mode Widget -->
       <div class="sidebar-widget glass" style="border-color: var(--secondary);">
         <h3 class="widget-title" style="color: var(--primary);">🚀 도슨트 투어</h3>
@@ -145,6 +153,18 @@
               </div>
 
               <div class="form-group">
+                <label for="project-category-input">환경 카테고리</label>
+                <select id="project-category-input">
+                  <option value="해양 쓰레기">해양 쓰레기</option>
+                  <option value="재활용">재활용</option>
+                  <option value="기후 변화">기후 변화</option>
+                  <option value="멸종위기 동물">멸종위기 동물</option>
+                  <option value="숲 보호">숲 보호</option>
+                  <option value="탄소중립">탄소중립</option>
+                  <option value="자유주제" selected>자유주제</option>
+                </select>
+              </div>
+
               <div class="form-group">
                 <label for="project-desc-input">작품 상세 설명</label>
                 <textarea id="project-desc-input" rows="4" placeholder="작품의 목적과 플레이 방법을 적어주세요." required></textarea>
