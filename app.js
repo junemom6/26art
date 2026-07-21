@@ -47,15 +47,23 @@ function initFirebase() {
 // Real-time listener: keeps `projects` in sync with the shared database.
 // Any student's like, comment, or upload appears for everyone automatically,
 // in any browser, without needing a page refresh.
-function listenToProjects() {
-  db.collection("projects").onSnapshot(async (snapshot) => {
-    if (snapshot.empty) {
-      // First time this database has ever been used — seed with sample projects
+async function listenToProjects() {
+  // Seed sample projects only the very first time this database is ever
+  // used — checked via a marker doc, NOT by "is the list empty right now"
+  // (an empty list can also mean the teacher intentionally deleted everything).
+  try {
+    const marker = await db.collection("projects").doc("_seed_marker").get();
+    if (!marker.exists) {
       await seedDefaultProjects();
-      return; // the seed write will trigger this listener again
     }
+  } catch (err) {
+    console.error("초기 데이터 확인 실패:", err);
+  }
 
-    projects = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+  db.collection("projects").onSnapshot((snapshot) => {
+    projects = snapshot.docs
+      .filter(doc => doc.id !== "_seed_marker") // internal marker, not a real project
+      .map(doc => ({ ...doc.data(), id: doc.id }));
     renderAll();
 
     // Keep an open modal's comments/likes in sync live too
@@ -73,12 +81,18 @@ function listenToProjects() {
   });
 }
 
-// Populate the database with the sample projects the very first time it's used
+// Populate the database with the sample projects the very first time it's used,
+// and leave behind a marker doc so this never runs again — even if every
+// project is later deleted by the teacher.
 async function seedDefaultProjects() {
   const batch = db.batch();
   defaultProjects.forEach(p => {
     const ref = db.collection("projects").doc(p.id);
     batch.set(ref, p);
+  });
+  batch.set(db.collection("projects").doc("_seed_marker"), {
+    seeded: true,
+    seededAt: new Date().toISOString()
   });
   await batch.commit();
 }
