@@ -1,7 +1,6 @@
 // State Management
 let projects = [];
 let categories = ["전체", "해양 쓰레기", "재활용", "기후 변화", "멸종위기 동물", "숲 보호", "탄소중립", "자유주제"];
-let currentCategory = "전체";
 let searchQuery = "";
 let currentProjectId = null;
 let tourMode = false;
@@ -11,8 +10,6 @@ let tourTimeLeft = 10; // seconds per slide
 let theme = "light";
 let activeTab = "gallery"; // gallery, upload, admin
 let uploadedHtmlContent = ""; // Stores uploaded HTML string
-let currentBlobUrl = null;    // Dynamic Blob URL for modal viewer
-let tourBlobUrl = null;       // Dynamic Blob URL for tour viewer
 let db = null;                // Firestore database handle (shared across all browsers/devices)
 
 // Initialize Application
@@ -189,7 +186,6 @@ function setupEventListeners() {
 
 // Render All Components
 function renderAll() {
-  renderCategories();
   renderGallery();
   renderAdminStats();
   renderAdminTable();
@@ -237,46 +233,19 @@ function switchTab(tabName) {
   }
 }
 
-// Render Environmental Categories Sidebar
-function renderCategories() {
-  const list = document.getElementById("category-list");
-  list.innerHTML = "";
-
-  categories.forEach(cat => {
-    // Calculate project counts (approved only, except for admin)
-    const count = cat === "전체" 
-      ? projects.filter(p => p.approved).length 
-      : projects.filter(p => p.category === cat && p.approved).length;
-
-    const li = document.createElement("li");
-    li.className = `category-item ${currentCategory === cat ? "active" : ""}`;
-    li.innerHTML = `
-      <span>📂 ${cat}</span>
-      <span class="category-count">${count}</span>
-    `;
-    li.addEventListener("click", () => {
-      currentCategory = cat;
-      renderCategories();
-      renderGallery();
-    });
-    list.appendChild(li);
-  });
-}
-
 // Render Project Gallery
 function renderGallery() {
   const grid = document.getElementById("gallery-grid");
   grid.innerHTML = "";
 
-  // Filter approved projects matching category and search query
+  // Filter approved projects matching the search query
   const filtered = projects.filter(p => {
     if (!p.approved) return false;
-    
-    const matchesCategory = currentCategory === "전체" || p.category === currentCategory;
+
     const matchesSearch = p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           p.student.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           p.description.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
+    return matchesSearch;
   });
 
   if (filtered.length === 0) {
@@ -284,7 +253,7 @@ function renderGallery() {
       <div style="grid-column: 1/-1; text-align: center; padding: 50px; color: var(--text-muted);">
         <span style="font-size: 3rem;">🔍</span>
         <h3 style="margin-top: 15px;">조건에 일치하는 작품이 없습니다.</h3>
-        <p>다른 키워드로 검색하거나 새로운 카테고리를 탐색해보세요!</p>
+        <p>다른 키워드로 검색해보세요!</p>
       </div>
     `;
     return;
@@ -340,18 +309,15 @@ function renderGallery() {
 }
 
 // Build the miniature live preview inside a gallery card thumbnail.
-// Uses the same source resolution as the main viewer (uploaded HTML blob or url),
-// scaled down inside the thumbnail box. Falls back to the emoji icon on error.
+// Uses srcdoc (not blob: URLs) so it also works inside restrictive mobile
+// in-app browsers (KakaoTalk, Naver, etc.) that block blob: iframe sources.
+// Falls back to the emoji icon if loading fails or times out.
 function setupCardThumbnail(card, project) {
   const frame = card.querySelector(".card-thumbnail-iframe");
   if (!frame) return;
 
-  let blobUrl = null;
-
   if (project.htmlContent) {
-    const blob = new Blob([project.htmlContent], { type: "text/html" });
-    blobUrl = URL.createObjectURL(blob);
-    frame.src = blobUrl;
+    frame.srcdoc = project.htmlContent;
   } else if (project.url) {
     frame.src = project.url;
   } else {
@@ -361,20 +327,19 @@ function setupCardThumbnail(card, project) {
 
   frame.addEventListener("load", () => {
     frame.classList.add("loaded");
-    if (blobUrl) {
-      // Safe to revoke once the iframe has consumed the blob content
-      URL.revokeObjectURL(blobUrl);
-      blobUrl = null;
-    }
   });
 
   frame.addEventListener("error", () => {
     frame.remove();
-    if (blobUrl) {
-      URL.revokeObjectURL(blobUrl);
-      blobUrl = null;
-    }
   });
+
+  // Some restrictive browsers never fire load/error at all — they just hang.
+  // Treat "still not loaded after 6s" as a failure so the fallback icon shows.
+  setTimeout(() => {
+    if (frame.isConnected && !frame.classList.contains("loaded")) {
+      frame.remove();
+    }
+  }, 6000);
 }
 
 // Like Project Card Action
@@ -396,12 +361,6 @@ function openProjectModal(id) {
   const p = projects.find(x => x.id === id);
   if (!p) return;
 
-  // Revoke previous blob URL if exists
-  if (currentBlobUrl) {
-    URL.revokeObjectURL(currentBlobUrl);
-    currentBlobUrl = null;
-  }
-
   // Increment views (shared across all browsers)
   if (db) {
     db.collection("projects").doc(id).update({
@@ -409,12 +368,14 @@ function openProjectModal(id) {
     }).catch(err => console.error("조회수 저장 실패:", err));
   }
 
-  // Build iframe link
+  // Build iframe content. srcdoc (not blob: URLs) also works inside
+  // restrictive mobile in-app browsers (KakaoTalk, Naver, etc.) that
+  // block blob: iframe sources.
   const iframe = document.getElementById("modal-frame");
+  iframe.removeAttribute("srcdoc");
+  iframe.src = "";
   if (p.htmlContent) {
-    const blob = new Blob([p.htmlContent], { type: "text/html" });
-    currentBlobUrl = URL.createObjectURL(blob);
-    iframe.src = currentBlobUrl;
+    iframe.srcdoc = p.htmlContent;
   } else {
     iframe.src = p.url;
   }
@@ -468,12 +429,10 @@ function openProjectModal(id) {
 // Close Modal
 function closeModal() {
   document.getElementById("modal-overlay").classList.remove("active");
-  document.getElementById("modal-frame").src = "";
+  const iframe = document.getElementById("modal-frame");
+  iframe.removeAttribute("srcdoc");
+  iframe.src = "";
   currentProjectId = null;
-  if (currentBlobUrl) {
-    URL.revokeObjectURL(currentBlobUrl);
-    currentBlobUrl = null;
-  }
 }
 
 // Show QR Code Share Modal
@@ -686,7 +645,7 @@ function submitProject(e) {
   const title = document.getElementById("project-title-input").value.trim();
   const student = document.getElementById("project-student-input").value.trim();
   const description = document.getElementById("project-desc-input").value.trim();
-  const category = document.getElementById("project-category-input").value;
+  const category = "자유주제"; // Category picker removed from the upload form
 
   if (!title || !student || !description) {
     alert("모든 필드를 입력해 주세요!");
@@ -885,17 +844,12 @@ function loadTourProject() {
   const p = tourList[tourIndex];
   if (!p) return;
 
-  if (tourBlobUrl) {
-    URL.revokeObjectURL(tourBlobUrl);
-    tourBlobUrl = null;
-  }
-
-  // Frame URL
+  // Frame content — srcdoc also works inside restrictive in-app browsers
   const iframe = document.getElementById("tour-frame");
+  iframe.removeAttribute("srcdoc");
+  iframe.src = "";
   if (p.htmlContent) {
-    const blob = new Blob([p.htmlContent], { type: "text/html" });
-    tourBlobUrl = URL.createObjectURL(blob);
-    iframe.src = tourBlobUrl;
+    iframe.srcdoc = p.htmlContent;
   } else {
     iframe.src = p.url;
   }
@@ -934,11 +888,9 @@ function stopTourMode() {
   tourMode = false;
   clearInterval(tourInterval);
   document.getElementById("tour-overlay").style.display = "none";
-  document.getElementById("tour-frame").src = "";
-  if (tourBlobUrl) {
-    URL.revokeObjectURL(tourBlobUrl);
-    tourBlobUrl = null;
-  }
+  const iframe = document.getElementById("tour-frame");
+  iframe.removeAttribute("srcdoc");
+  iframe.src = "";
 }
 
 // Particle/Confetti physics simulator for successful upload state
