@@ -10,7 +10,7 @@
 // 설정 방법은 채팅에서 전달드린 안내를 참고해주세요.
 // ============================================================
 
-const firebaseConfig = {
+window.firebaseConfig = {
   apiKey: "AIzaSyB86f2W4AeoZcbFe9dQqIf4kYtMwsMjXFU",
   authDomain: "mirae-189ed.firebaseapp.com",
   projectId: "mirae-189ed",
