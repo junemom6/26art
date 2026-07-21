@@ -5,10 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>디지털환경전시회 - 미래형 친환경 디지털 미술관</title>
   <link rel="stylesheet" href="styles.css">
+  <!-- Firebase: shared cloud database so all students see the same projects/likes/comments
+       across every browser and device. Set up your free project and edit firebase-config.js -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js" defer></script>
+  <script src="firebase-config.js" defer></script>
   <script src="mockData.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
+
+  <!-- Shown only when firebase-config.js still has placeholder keys; guides the teacher through setup -->
+  <div id="firebase-setup-banner" style="display:none; position:fixed; inset:0; z-index:99999; background:rgba(20,30,25,0.92); color:#fff; padding:30px; overflow-y:auto; font-family:sans-serif; line-height:1.7;">
+    <div style="max-width:640px; margin:40px auto; background:#1b2b22; border-radius:16px; padding:30px 35px; border:1px solid #3a5c46;">
+      <h2 style="margin-top:0;">🔧 공유 데이터베이스 설정이 필요해요</h2>
+      <p>학생 작품·좋아요·댓글을 모든 브라우저에서 함께 보려면, 무료 Firebase 데이터베이스를 한 번만 연결해주세요.</p>
+      <ol style="padding-left:20px;">
+        <li><a href="https://console.firebase.google.com/" target="_blank" style="color:#7EC8E3;">Firebase 콘솔</a>에서 무료 프로젝트를 만드세요.</li>
+        <li>왼쪽 메뉴에서 <strong>Firestore Database</strong>를 만들고, <strong>테스트 모드</strong>로 시작하세요.</li>
+        <li>프로젝트 설정(⚙️) → <strong>내 앱 추가</strong> → 웹(&lt;/&gt;) 아이콘을 눌러 앱을 등록하세요.</li>
+        <li>표시되는 <code>firebaseConfig</code> 값을 복사해서, 내려받은 파일 중 <code>firebase-config.js</code> 안에 그대로 붙여넣으세요.</li>
+        <li>파일을 저장하고 다시 배포/업로드하면 완료됩니다!</li>
+      </ol>
+      <p style="font-size:0.85rem; color:#a8c3b4;">자세한 안내는 채팅에서 전달드린 설명을 참고해주세요. 설정 전까지는 임시로 이 화면만 보이고, 작품 목록은 표시되지 않아요.</p>
+    </div>
+  </div>
 
   <!-- Floating Nature Elements Background (Global Parallax Mock) -->
   <div class="hero-bg-elements">

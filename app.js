@@ -13,6 +13,7 @@ let activeTab = "gallery"; // gallery, upload, admin
 let uploadedHtmlContent = ""; // Stores uploaded HTML string
 let currentBlobUrl = null;    // Dynamic Blob URL for modal viewer
 let tourBlobUrl = null;       // Dynamic Blob URL for tour viewer
+let db = null;                // Firestore database handle (shared across all browsers/devices)
 
 // Initialize Application
 document.addEventListener("DOMContentLoaded", () => {
@@ -20,20 +21,71 @@ document.addEventListener("DOMContentLoaded", () => {
   setupEventListeners();
   applyTheme(theme);
   switchTab(activeTab);
-  renderAll();
+  initFirebase();
 });
 
-// Load and Seed Data
-function initData() {
-  // Load Projects
-  const storedProjects = localStorage.getItem("eco_exhibit_projects");
-  if (storedProjects) {
-    projects = JSON.parse(storedProjects);
-  } else {
-    projects = [...defaultProjects];
-    localStorage.setItem("eco_exhibit_projects", JSON.stringify(projects));
+// Connect to the shared Firebase database. Falls back to a setup banner
+// if firebase-config.js still has placeholder keys, so it fails gracefully
+// instead of showing a blank page or console error to the teacher.
+function initFirebase() {
+  const isPlaceholder = !window.firebaseConfig || window.firebaseConfig.apiKey === "YOUR_API_KEY_HERE";
+  if (isPlaceholder) {
+    document.getElementById("firebase-setup-banner").style.display = "block";
+    return;
   }
 
+  try {
+    firebase.initializeApp(window.firebaseConfig);
+    db = firebase.firestore();
+    listenToProjects();
+  } catch (err) {
+    console.error("Firebase 초기화 실패:", err);
+    document.getElementById("firebase-setup-banner").style.display = "block";
+  }
+}
+
+// Real-time listener: keeps `projects` in sync with the shared database.
+// Any student's like, comment, or upload appears for everyone automatically,
+// in any browser, without needing a page refresh.
+function listenToProjects() {
+  db.collection("projects").onSnapshot(async (snapshot) => {
+    if (snapshot.empty) {
+      // First time this database has ever been used — seed with sample projects
+      await seedDefaultProjects();
+      return; // the seed write will trigger this listener again
+    }
+
+    projects = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+    renderAll();
+
+    // Keep an open modal's comments/likes in sync live too
+    if (currentProjectId) {
+      const p = projects.find(x => x.id === currentProjectId);
+      if (p) {
+        renderComments(p.comments || []);
+        const likeCountEl = document.getElementById("modal-like-btn-count");
+        if (likeCountEl) likeCountEl.textContent = p.likes;
+      }
+    }
+  }, (err) => {
+    console.error("Firestore 연결 오류:", err);
+    alert("공유 데이터베이스에 연결할 수 없습니다. 인터넷 연결과 Firebase 설정을 확인해주세요.");
+  });
+}
+
+// Populate the database with the sample projects the very first time it's used
+async function seedDefaultProjects() {
+  const batch = db.batch();
+  defaultProjects.forEach(p => {
+    const ref = db.collection("projects").doc(p.id);
+    batch.set(ref, p);
+  });
+  await batch.commit();
+}
+
+// Load and Seed Local Preferences (categories/theme only —
+// project data now lives in the shared Firebase database)
+function initData() {
   // Load Categories
   const storedCategories = localStorage.getItem("eco_exhibit_categories");
   if (storedCategories) {
@@ -314,24 +366,14 @@ function setupCardThumbnail(card, project) {
 // Like Project Card Action
 function likeProject(id, event) {
   if (event) event.stopPropagation();
+  if (!db) return;
 
-  const p = projects.find(x => x.id === id);
-  if (p) {
-    p.likes++;
-    localStorage.setItem("eco_exhibit_projects", JSON.stringify(projects));
-    
-    // Update active counters in DOM immediately
-    const cnt = document.getElementById(`like-count-${id}`);
-    if (cnt) cnt.textContent = p.likes;
-
-    renderAdminStats();
-    
-    // Animate like heart button in modal if open
-    const modalLikeBtn = document.getElementById("modal-like-btn-count");
-    if (modalLikeBtn && currentProjectId === id) {
-      modalLikeBtn.textContent = p.likes;
-    }
-  }
+  db.collection("projects").doc(id).update({
+    likes: firebase.firestore.FieldValue.increment(1)
+  }).catch(err => {
+    console.error("좋아요 저장 실패:", err);
+  });
+  // UI updates automatically for everyone via the real-time listener
 }
 
 // Open Viewer Modal & Frame
@@ -346,9 +388,12 @@ function openProjectModal(id) {
     currentBlobUrl = null;
   }
 
-  // Increment views
-  p.views++;
-  localStorage.setItem("eco_exhibit_projects", JSON.stringify(projects));
+  // Increment views (shared across all browsers)
+  if (db) {
+    db.collection("projects").doc(id).update({
+      views: firebase.firestore.FieldValue.increment(1)
+    }).catch(err => console.error("조회수 저장 실패:", err));
+  }
 
   // Build iframe link
   const iframe = document.getElementById("modal-frame");
@@ -491,9 +536,7 @@ function addComment() {
   }
 
   const p = projects.find(x => x.id === currentProjectId);
-  if (p) {
-    if (!p.comments) p.comments = [];
-    
+  if (p && db) {
     const newComment = {
       id: "c_" + Date.now(),
       author: author,
@@ -503,38 +546,38 @@ function addComment() {
       anonymous: anonCheck.checked
     };
 
-    p.comments.push(newComment);
-    localStorage.setItem("eco_exhibit_projects", JSON.stringify(projects));
-    
-    // Reset Form
-    textInput.value = "";
-    if (!anonCheck.checked) authorInput.value = "";
-    
-    // Re-render
-    renderComments(p.comments);
-    renderGallery(); // Update count in main list
+    const updatedComments = [...(p.comments || []), newComment];
+
+    db.collection("projects").doc(currentProjectId).update({ comments: updatedComments })
+      .then(() => {
+        // Reset Form
+        textInput.value = "";
+        if (!anonCheck.checked) authorInput.value = "";
+        // The real-time listener re-renders comments for everyone, including this browser
+      })
+      .catch(err => {
+        console.error("피드백 저장 실패:", err);
+        alert("피드백 저장에 실패했습니다. 인터넷 연결을 확인해주세요.");
+      });
   }
 }
 
 // Like Comment Action
 function likeComment(commentId) {
   const p = projects.find(x => x.id === currentProjectId);
-  if (p && p.comments) {
-    const c = p.comments.find(x => x.id === commentId);
-    if (c) {
-      c.likes = (c.likes || 0) + 1;
-      localStorage.setItem("eco_exhibit_projects", JSON.stringify(projects));
-      
-      const likeEl = document.getElementById(`comment-likes-${commentId}`);
-      if (likeEl) likeEl.textContent = c.likes;
-    }
+  if (p && p.comments && db) {
+    const updatedComments = p.comments.map(c =>
+      c.id === commentId ? { ...c, likes: (c.likes || 0) + 1 } : c
+    );
+    db.collection("projects").doc(currentProjectId).update({ comments: updatedComments })
+      .catch(err => console.error("피드백 추천 저장 실패:", err));
   }
 }
 
 // Edit Comment Action
 function editComment(commentId) {
   const p = projects.find(x => x.id === currentProjectId);
-  if (!p || !p.comments) return;
+  if (!p || !p.comments || !db) return;
   const c = p.comments.find(x => x.id === commentId);
   if (!c) return;
 
@@ -547,9 +590,14 @@ function editComment(commentId) {
     return;
   }
 
-  c.text = trimmed;
-  localStorage.setItem("eco_exhibit_projects", JSON.stringify(projects));
-  renderComments(p.comments);
+  const updatedComments = p.comments.map(x =>
+    x.id === commentId ? { ...x, text: trimmed } : x
+  );
+  db.collection("projects").doc(currentProjectId).update({ comments: updatedComments })
+    .catch(err => {
+      console.error("피드백 수정 실패:", err);
+      alert("피드백 수정에 실패했습니다. 인터넷 연결을 확인해주세요.");
+    });
 }
 
 // Delete Comment Action
@@ -557,12 +605,13 @@ function deleteComment(commentId) {
   if (!confirm("정말 이 피드백을 삭제하시겠습니까?")) return;
   
   const p = projects.find(x => x.id === currentProjectId);
-  if (p && p.comments) {
-    p.comments = p.comments.filter(x => x.id !== commentId);
-    localStorage.setItem("eco_exhibit_projects", JSON.stringify(projects));
-    
-    renderComments(p.comments);
-    renderGallery();
+  if (p && p.comments && db) {
+    const updatedComments = p.comments.filter(x => x.id !== commentId);
+    db.collection("projects").doc(currentProjectId).update({ comments: updatedComments })
+      .catch(err => {
+        console.error("피드백 삭제 실패:", err);
+        alert("피드백 삭제에 실패했습니다. 인터넷 연결을 확인해주세요.");
+      });
   }
 }
 
@@ -630,6 +679,11 @@ function submitProject(e) {
     return;
   }
 
+  if (!db) {
+    alert("공유 데이터베이스에 연결되지 않았습니다. 페이지를 새로고침하거나 Firebase 설정을 확인해주세요.");
+    return;
+  }
+
   // Generate random nice environmental gradients
   const gradients = [
     "linear-gradient(135deg, #11998e 0%, #38ef7d 100%)",
@@ -641,8 +695,8 @@ function submitProject(e) {
   ];
   const emojis = ["🐋", "♻️", "🌱", "🐼", "🐻‍❄️", "🌳", "🌊", "🦁", "🍎", "🏠"];
 
+  const newId = "proj_" + Date.now();
   const newProj = {
-    id: "proj_" + Date.now(),
     title: title,
     student: student,
     description: description,
@@ -650,7 +704,7 @@ function submitProject(e) {
     likes: 0,
     views: 0,
     comments: [],
-    url: "", // No folder URL since HTML is in localStorage
+    url: "", // No folder URL since HTML is stored directly in the database
     htmlContent: uploadedHtmlContent,
     thumbnail: emojis[Math.floor(Math.random() * emojis.length)],
     bgColor: gradients[Math.floor(Math.random() * gradients.length)],
@@ -658,23 +712,30 @@ function submitProject(e) {
     timestamp: new Date().toISOString()
   };
 
-  projects.push(newProj);
-  localStorage.setItem("eco_exhibit_projects", JSON.stringify(projects));
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  if (submitBtn) submitBtn.disabled = true;
 
-  // Reset states
-  uploadedHtmlContent = "";
+  db.collection("projects").doc(newId).set(newProj)
+    .then(() => {
+      // Reset states
+      uploadedHtmlContent = "";
 
-  // Reset form & Drag and drop
-  document.getElementById("upload-form").reset();
-  document.getElementById("upload-icon-status").style.display = "block";
-  document.getElementById("upload-success-badge").style.display = "none";
-  document.getElementById("upload-file-name").textContent = "지정된 파일을 여기에 끌어다 놓으세요";
+      // Reset form & Drag and drop
+      document.getElementById("upload-form").reset();
+      document.getElementById("upload-icon-status").style.display = "block";
+      document.getElementById("upload-success-badge").style.display = "none";
+      document.getElementById("upload-file-name").textContent = "지정된 파일을 여기에 끌어다 놓으세요";
 
-  alert("작품이 등록되었습니다! 전시관에 즉시 반영되었습니다.");
-  
-  // Update views
-  renderAll();
-  switchTab("gallery");
+      alert("작품이 등록되었습니다! 전시관에 즉시 반영되었습니다.");
+      switchTab("gallery");
+    })
+    .catch(err => {
+      console.error("작품 업로드 실패:", err);
+      alert("작품 업로드에 실패했습니다. 인터넷 연결을 확인하고 다시 시도해주세요.");
+    })
+    .finally(() => {
+      if (submitBtn) submitBtn.disabled = false;
+    });
 }
 
 // Render Admin Statistics & Visual Chart
@@ -763,21 +824,22 @@ function renderAdminTable() {
 // Toggle Approval State in Admin Panel
 function toggleProjectApproval(id) {
   const p = projects.find(x => x.id === id);
-  if (p) {
-    p.approved = !p.approved;
-    localStorage.setItem("eco_exhibit_projects", JSON.stringify(projects));
-    renderAll();
+  if (p && db) {
+    db.collection("projects").doc(id).update({ approved: !p.approved })
+      .catch(err => console.error("승인 상태 저장 실패:", err));
   }
 }
 
 // Delete Project Admin Panel
 function deleteProjectAdmin(id) {
   if (!confirm("정말 이 작품을 삭제하시겠습니까? (이 작업은 되돌릴 수 없습니다)")) return;
-  
-  projects = projects.filter(x => x.id !== id);
-  localStorage.setItem("eco_exhibit_projects", JSON.stringify(projects));
-  
-  renderAll();
+  if (!db) return;
+
+  db.collection("projects").doc(id).delete()
+    .catch(err => {
+      console.error("작품 삭제 실패:", err);
+      alert("작품 삭제에 실패했습니다. 인터넷 연결을 확인해주세요.");
+    });
 }
 
 // Interactive museum slideshow exhibition kiosk tour
